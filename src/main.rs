@@ -5,6 +5,11 @@ fn main() {
     let image_width = 400;
     let image_height = (image_width as f32 / aspect_ratio) as usize;
 
+    // World
+    let mut world = HittableList::new();
+    world.add(Box::new(Sphere::new(Point3::new(0.0, 0.0, -1.0), 0.5)));
+    world.add(Box::new(Sphere::new(Point3::new(0.0, -100.5, -1.0), 100.0)));
+
     // Camera
     let focal_length = 1.0_f32;
     let viewport_height = 2.0_f32;
@@ -32,7 +37,7 @@ fn main() {
                 pixel_origin + (pixel_delta_u * i as f32) + (pixel_delta_v * j as f32);
             let ray_dir = pixel_center - camera_center;
             let ray = Ray::new(camera_center, ray_dir);
-            image[j][i] = ray.color();
+            image[j][i] = ray.color(&world);
         });
     });
 
@@ -102,6 +107,14 @@ impl Default for Vec3 {
     }
 }
 
+impl std::ops::Neg for Vec3 {
+    type Output = Self;
+
+    fn neg(self) -> Self {
+        Vec3(-self.0, -self.1, -self.2)
+    }
+}
+
 impl std::ops::Add for Vec3 {
     type Output = Self;
 
@@ -115,6 +128,14 @@ impl std::ops::Add<f32> for Vec3 {
 
     fn add(self, scalar: f32) -> Self {
         Vec3(self.0 + scalar, self.1 + scalar, self.2 + scalar)
+    }
+}
+
+impl std::ops::Add<Vec3> for f32 {
+    type Output = Vec3;
+
+    fn add(self, vec: Vec3) -> Vec3 {
+        Vec3(vec.0 + self, vec.1 + self, vec.2 + self)
     }
 }
 
@@ -167,12 +188,9 @@ impl Ray {
         self.orig + t * self.dir
     }
 
-    fn color(&self) -> Color3 {
-        let t = hit_sphere(Point3::new(0.0, 0.0, -1.0), 0.5, self);
-        if let Some(t) = t {
-            // return Color3::new(1.0, 0.0, 0.0);
-            let normal = (self.at(t) - Point3::new(0.0, 0.0, -1.0)).normalize();
-            return 0.5 * (normal + 1.0);
+    fn color<T: Hittable>(&self, world: &T) -> Color3 {
+        if let Some(rec) = world.hit(self, 0.0, f32::INFINITY) {
+            return 0.5 * (Color3::new(1.0, 1.0, 1.0) + rec.normal);
         }
 
         let unit_dir = self.dir.normalize();
@@ -181,14 +199,97 @@ impl Ray {
     }
 }
 
-fn hit_sphere(center: Point3, radius: f32, ray: &Ray) -> Option<f32> {
-    let oc = center - ray.orig;
-    let a = ray.dir.self_dot();
-    let h = Vec3::dot(&ray.dir, &oc);
-    let c = oc.self_dot() - radius * radius;
-    let discriminant = h * h - a * c;
-    if discriminant < 0.0 {
-        return None;
+struct HitRecord {
+    #[allow(dead_code)]
+    p: Point3,
+    normal: Vec3,
+    t: f32,
+}
+
+impl HitRecord {
+    fn set_face_normal(&mut self, r: &Ray, outward_normal: &Vec3) {
+        let front_face = Vec3::dot(&r.dir, outward_normal) < 0.0;
+        self.normal = if front_face {
+            *outward_normal
+        } else {
+            -*outward_normal
+        };
     }
-    Some((h - discriminant.sqrt()) / (a))
+}
+
+trait Hittable {
+    fn hit(&self, r: &Ray, t_min: f32, t_max: f32) -> Option<HitRecord>;
+}
+
+struct Sphere {
+    center: Point3,
+    radius: f32,
+}
+
+impl Sphere {
+    fn new(center: Point3, radius: f32) -> Self {
+        let radius = f32::max(0.0, radius);
+        Sphere { center, radius }
+    }
+}
+
+impl Hittable for Sphere {
+    fn hit(&self, r: &Ray, t_min: f32, t_max: f32) -> Option<HitRecord> {
+        let oc = self.center - r.orig;
+        let a = r.dir.self_dot();
+        let h = Vec3::dot(&r.dir, &oc);
+        let c = oc.self_dot() - self.radius * self.radius;
+
+        let discriminant = h * h - a * c;
+        if discriminant < 0.0 {
+            return None;
+        }
+        let sqrtd = discriminant.sqrt();
+
+        // Find the nearest root that lies in the acceptable range.
+        let mut root = (h - sqrtd) / a;
+        if root <= t_min || t_max <= root {
+            root = (h + sqrtd) / a;
+            if root <= t_min || t_max <= root {
+                return None;
+            }
+        }
+
+        let t = root;
+        let p = r.at(t);
+        let normal = (p - self.center) / self.radius;
+        let mut rec = HitRecord { p, normal, t };
+        rec.set_face_normal(r, &normal);
+        Some(rec)
+    }
+}
+
+struct HittableList {
+    objects: Vec<Box<dyn Hittable>>,
+}
+
+impl HittableList {
+    fn new() -> Self {
+        HittableList { objects: vec![] }
+    }
+
+    fn add(&mut self, object: Box<dyn Hittable>) {
+        self.objects.push(object);
+    }
+}
+
+impl Hittable for HittableList {
+    fn hit(&self, r: &Ray, t_min: f32, t_max: f32) -> Option<HitRecord> {
+        let mut temp_rec = None;
+        let mut closest_so_far = t_max;
+
+        for object in &self.objects {
+            if let Some(rec) = object.hit(r, t_min, closest_so_far) {
+                closest_so_far = rec.t;
+                temp_rec = Some(rec);
+            }
+        }
+
+        temp_rec
+    }
 }
