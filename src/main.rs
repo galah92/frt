@@ -90,6 +90,10 @@ impl Vec3 {
     fn dot(u: &Self, v: &Self) -> f32 {
         u.0 * v.0 + u.1 * v.1 + u.2 * v.2
     }
+
+    fn self_dot(&self) -> f32 {
+        Self::dot(self, self)
+    }
 }
 
 impl Default for Vec3 {
@@ -103,6 +107,14 @@ impl std::ops::Add for Vec3 {
 
     fn add(self, other: Self) -> Self {
         Vec3(self.0 + other.0, self.1 + other.1, self.2 + other.2)
+    }
+}
+
+impl std::ops::Add<f32> for Vec3 {
+    type Output = Self;
+
+    fn add(self, scalar: f32) -> Self {
+        Vec3(self.0 + scalar, self.1 + scalar, self.2 + scalar)
     }
 }
 
@@ -151,18 +163,16 @@ impl Ray {
         Ray { orig, dir }
     }
 
-    #[allow(dead_code)]
     fn at(&self, t: f32) -> Point3 {
-        Point3::new(
-            self.orig.0 + t * self.dir.0,
-            self.orig.1 + t * self.dir.1,
-            self.orig.2 + t * self.dir.2,
-        )
+        self.orig + t * self.dir
     }
 
     fn color(&self) -> Color3 {
-        if hit_sphere(Point3::new(0.0, 0.0, -1.0), 0.5, self) {
-            return Color3::new(1.0, 0.0, 0.0);
+        let t = hit_sphere(Point3::new(0.0, 0.0, -1.0), 0.5, self);
+        if let Some(t) = t {
+            // return Color3::new(1.0, 0.0, 0.0);
+            let normal = (self.at(t) - Point3::new(0.0, 0.0, -1.0)).normalize();
+            return 0.5 * (normal + 1.0);
         }
 
         let unit_dir = self.dir.normalize();
@@ -171,11 +181,14 @@ impl Ray {
     }
 }
 
-fn hit_sphere(center: Point3, radius: f32, ray: &Ray) -> bool {
+fn hit_sphere(center: Point3, radius: f32, ray: &Ray) -> Option<f32> {
     let oc = center - ray.orig;
-    let a = Vec3::dot(&ray.dir, &ray.dir);
-    let b = 2.0 * Vec3::dot(&oc, &ray.dir);
-    let c = Vec3::dot(&oc, &oc) - radius * radius;
-    let discriminant = b * b - 4.0 * a * c;
-    discriminant > 0.0
+    let a = ray.dir.self_dot();
+    let h = Vec3::dot(&ray.dir, &oc);
+    let c = oc.self_dot() - radius * radius;
+    let discriminant = h * h - a * c;
+    if discriminant < 0.0 {
+        return None;
+    }
+    Some((h - discriminant.sqrt()) / (a))
 }
