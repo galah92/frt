@@ -86,6 +86,10 @@ impl Vec3 {
         let mag = (self.0 * self.0 + self.1 * self.1 + self.2 * self.2).sqrt();
         Vec3(self.0 / mag, self.1 / mag, self.2 / mag)
     }
+
+    fn dot(u: &Self, v: &Self) -> f32 {
+        u.0 * v.0 + u.1 * v.1 + u.2 * v.2
+    }
 }
 
 impl Default for Vec3 {
@@ -157,8 +161,21 @@ impl Ray {
     }
 
     fn color(&self) -> Color3 {
+        if hit_sphere(Point3::new(0.0, 0.0, -1.0), 0.5, self) {
+            return Color3::new(1.0, 0.0, 0.0);
+        }
+
         let unit_dir = self.dir.normalize();
         let t = 0.5 * (unit_dir.1 + 1.0);
         (1.0 - t) * Color3::new(1.0, 1.0, 1.0) + t * Color3::new(0.5, 0.7, 1.0)
     }
+}
+
+fn hit_sphere(center: Point3, radius: f32, ray: &Ray) -> bool {
+    let oc = center - ray.orig;
+    let a = Vec3::dot(&ray.dir, &ray.dir);
+    let b = 2.0 * Vec3::dot(&oc, &ray.dir);
+    let c = Vec3::dot(&oc, &oc) - radius * radius;
+    let discriminant = b * b - 4.0 * a * c;
+    discriminant > 0.0
 }
