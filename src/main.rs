@@ -1,14 +1,16 @@
+use rand::Rng;
+
 fn main() {
     let aspect_ratio = 16.0 / 9.0_f32;
     let image_width = 400;
-    let camera = Camera::new(aspect_ratio, image_width);
+    let samples_per_pixel = 100;
+    let camera = Camera::new(aspect_ratio, image_width, samples_per_pixel);
 
     let mut world = HittableList::new();
     world.add(Box::new(Sphere::new(Point3::new(0.0, 0.0, -1.0), 0.5)));
     world.add(Box::new(Sphere::new(Point3::new(0.0, -100.5, -1.0), 100.0)));
 
     let image = camera.render(&world);
-
     let ppm = to_ppm(&image);
     std::fs::write("output.ppm", ppm).unwrap();
 }
@@ -18,11 +20,12 @@ fn to_ppm(image: &Vec<Vec<Color3>>) -> String {
     ppm.push_str("P3\n");
     ppm.push_str(&format!("{} {}\n", image[0].len(), image.len()));
     ppm.push_str("255\n");
+    let intensity = Interval::new(0.0, 0.999);
     for row in image {
         for color in row {
-            let r = (color.0 * 255.999) as u8;
-            let g = (color.1 * 255.999) as u8;
-            let b = (color.2 * 255.999) as u8;
+            let r = (intensity.clamp(color.0) * 255.999) as u8;
+            let g = (intensity.clamp(color.1) * 255.999) as u8;
+            let b = (intensity.clamp(color.2) * 255.999) as u8;
             ppm.push_str(&format!("{} {} {} ", r, g, b));
         }
         ppm.push('\n');
@@ -90,6 +93,14 @@ impl std::ops::Add<Vec3> for f32 {
     }
 }
 
+impl std::ops::AddAssign for Vec3 {
+    fn add_assign(&mut self, other: Self) {
+        self.0 += other.0;
+        self.1 += other.1;
+        self.2 += other.2;
+    }
+}
+
 impl std::ops::Sub for Vec3 {
     type Output = Self;
 
@@ -152,6 +163,10 @@ impl Interval {
 
     fn surrounds(&self, value: f32) -> bool {
         self.min < value && value < self.max
+    }
+
+    fn clamp(&self, value: f32) -> f32 {
+        f32::max(self.min, f32::min(self.max, value))
     }
 }
 
@@ -270,10 +285,11 @@ struct Camera {
     lower_left_corner: Point3,
     pixel_du: Vec3,
     pixel_dv: Vec3,
+    samples_per_pixel: usize,
 }
 
 impl Camera {
-    fn new(aspect_ratio: f32, image_width: usize) -> Self {
+    fn new(aspect_ratio: f32, image_width: usize, samples_per_pixel: usize) -> Self {
         let image_height = (image_width as f32 / aspect_ratio) as usize;
 
         let center = Point3::new(0.0, 0.0, 0.0);
@@ -304,20 +320,32 @@ impl Camera {
             lower_left_corner,
             pixel_du,
             pixel_dv,
+            samples_per_pixel,
         }
     }
 
     fn render<T: Hittable>(&self, world: &T) -> Vec<Vec<Color3>> {
+        let pixel_samples_scale = 1.0 / self.samples_per_pixel as f32;
         let mut image = vec![vec![Color3::default(); self.image_width]; self.image_height];
         (0..self.image_height).for_each(|j| {
             (0..self.image_width).for_each(|i| {
-                let (u, v) = (i as f32, j as f32);
-                let pixel_center = self.lower_left_corner + u * self.pixel_du + v * self.pixel_dv;
-                let ray = Ray::new(self.center, pixel_center - self.center);
-                image[j][i] = self.ray_color(&ray, world)
+                let mut color = Color3::default();
+                (0..self.samples_per_pixel).for_each(|_| {
+                    let ray = self.get_ray(i as f32, j as f32);
+                    color += pixel_samples_scale * self.ray_color(&ray, world);
+                });
+                image[j][i] = color;
             });
         });
         image
+    }
+
+    fn get_ray(&self, u: f32, v: f32) -> Ray {
+        let offset = sample_square();
+        let pixel_center = self.lower_left_corner
+            + (u + offset.0) * self.pixel_du
+            + (v + offset.1) * self.pixel_dv;
+        Ray::new(self.center, pixel_center - self.center)
     }
 
     fn ray_color<T: Hittable>(&self, r: &Ray, world: &T) -> Color3 {
@@ -329,4 +357,9 @@ impl Camera {
         let t = 0.5 * (unit_dir.1 + 1.0);
         (1.0 - t) * Color3::new(1.0, 1.0, 1.0) + t * Color3::new(0.5, 0.7, 1.0)
     }
+}
+
+fn sample_square() -> Vec3 {
+    let mut rng = rand::rng();
+    Vec3(rng.random::<f32>() - 0.5, rng.random::<f32>() - 0.5, 0.0)
 }
