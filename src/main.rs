@@ -189,7 +189,7 @@ impl Ray {
     }
 
     fn color<T: Hittable>(&self, world: &T) -> Color3 {
-        if let Some(rec) = world.hit(self, 0.0, f32::INFINITY) {
+        if let Some(rec) = world.hit(self, UNIVERSE_INTERVAL) {
             return 0.5 * (Color3::new(1.0, 1.0, 1.0) + rec.normal);
         }
 
@@ -198,6 +198,37 @@ impl Ray {
         (1.0 - t) * Color3::new(1.0, 1.0, 1.0) + t * Color3::new(0.5, 0.7, 1.0)
     }
 }
+
+struct Interval {
+    min: f32,
+    max: f32,
+}
+
+impl Interval {
+    fn new(min: f32, max: f32) -> Self {
+        Interval { min, max }
+    }
+
+    fn surrounds(&self, value: f32) -> bool {
+        self.min < value && value < self.max
+    }
+}
+
+impl Default for Interval {
+    fn default() -> Self {
+        EMPTY_INTERVAL
+    }
+}
+
+const EMPTY_INTERVAL: Interval = Interval {
+    min: f32::MAX,
+    max: f32::MIN,
+};
+
+const UNIVERSE_INTERVAL: Interval = Interval {
+    min: f32::MIN,
+    max: f32::MAX,
+};
 
 struct HitRecord {
     #[allow(dead_code)]
@@ -218,7 +249,7 @@ impl HitRecord {
 }
 
 trait Hittable {
-    fn hit(&self, r: &Ray, t_min: f32, t_max: f32) -> Option<HitRecord>;
+    fn hit(&self, r: &Ray, interval: Interval) -> Option<HitRecord>;
 }
 
 struct Sphere {
@@ -234,7 +265,7 @@ impl Sphere {
 }
 
 impl Hittable for Sphere {
-    fn hit(&self, r: &Ray, t_min: f32, t_max: f32) -> Option<HitRecord> {
+    fn hit(&self, r: &Ray, interval: Interval) -> Option<HitRecord> {
         let oc = self.center - r.orig;
         let a = r.dir.self_dot();
         let h = Vec3::dot(&r.dir, &oc);
@@ -248,9 +279,9 @@ impl Hittable for Sphere {
 
         // Find the nearest root that lies in the acceptable range.
         let mut root = (h - sqrtd) / a;
-        if root <= t_min || t_max <= root {
+        if !interval.surrounds(root) {
             root = (h + sqrtd) / a;
-            if root <= t_min || t_max <= root {
+            if !interval.surrounds(root) {
                 return None;
             }
         }
@@ -279,12 +310,12 @@ impl HittableList {
 }
 
 impl Hittable for HittableList {
-    fn hit(&self, r: &Ray, t_min: f32, t_max: f32) -> Option<HitRecord> {
+    fn hit(&self, r: &Ray, interval: Interval) -> Option<HitRecord> {
         let mut temp_rec = None;
-        let mut closest_so_far = t_max;
+        let mut closest_so_far = interval.max;
 
         for object in &self.objects {
-            if let Some(rec) = object.hit(r, t_min, closest_so_far) {
+            if let Some(rec) = object.hit(r, Interval::new(interval.min, closest_so_far)) {
                 closest_so_far = rec.t;
                 temp_rec = Some(rec);
             }
