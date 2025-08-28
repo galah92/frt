@@ -1,68 +1,19 @@
 fn main() {
-    image_generation();
-
     let aspect_ratio = 16.0 / 9.0_f32;
     let image_width = 400;
-    let image_height = (image_width as f32 / aspect_ratio) as usize;
+    let camera = Camera::new(aspect_ratio, image_width);
 
-    // World
     let mut world = HittableList::new();
     world.add(Box::new(Sphere::new(Point3::new(0.0, 0.0, -1.0), 0.5)));
     world.add(Box::new(Sphere::new(Point3::new(0.0, -100.5, -1.0), 100.0)));
 
-    // Camera
-    let focal_length = 1.0_f32;
-    let viewport_height = 2.0_f32;
-    let viewport_width = viewport_height * image_width as f32 / image_height as f32;
-    let camera_center = Point3::new(0.0, 0.0, 0.0);
+    let image = camera.render(&world);
 
-    // Vectors accross the viewport
-    let viewport_u = Vec3::new(viewport_width, 0.0, 0.0);
-    let viewport_v = Vec3::new(0.0, -viewport_height, 0.0);
-
-    // delta vectors
-    let pixel_delta_u = viewport_u / image_width as f32;
-    let pixel_delta_v = viewport_v / image_height as f32;
-
-    // Upper left corner of the viewport
-    let focal_vec = Vec3::new(0.0, 0.0, focal_length);
-    let viewport_upper_left = camera_center - (viewport_u / 2.0) - (viewport_v / 2.0) - focal_vec;
-    let pixel_origin = viewport_upper_left + (pixel_delta_u / 2.0) + (pixel_delta_v / 2.0);
-
-    // Image generation
-    let mut image = vec![vec![Color3::default(); image_width]; image_height];
-    (0..image_height).for_each(|j| {
-        (0..image_width).for_each(|i| {
-            let pixel_center =
-                pixel_origin + (pixel_delta_u * i as f32) + (pixel_delta_v * j as f32);
-            let ray_dir = pixel_center - camera_center;
-            let ray = Ray::new(camera_center, ray_dir);
-            image[j][i] = ray.color(&world);
-        });
-    });
-
-    let ppm = get_ppm(&image);
+    let ppm = to_ppm(&image);
     std::fs::write("output.ppm", ppm).unwrap();
 }
 
-fn image_generation() {
-    const IMG_WIDTH: usize = 256;
-    const IMG_HEIGHT: usize = 256;
-    let mut image = vec![vec![Color3::default(); IMG_WIDTH]; IMG_HEIGHT];
-    (0..IMG_HEIGHT).for_each(|y| {
-        (0..IMG_WIDTH).for_each(|x| {
-            let r = x as f32 / (IMG_WIDTH - 1) as f32;
-            let g = y as f32 / (IMG_HEIGHT - 1) as f32;
-            let b = 0.0;
-            image[y][x] = Color3::new(r, g, b);
-        });
-    });
-
-    let ppm = get_ppm(&image);
-    std::fs::write("output.ppm", ppm).unwrap();
-}
-
-fn get_ppm(image: &Vec<Vec<Color3>>) -> String {
+fn to_ppm(image: &Vec<Vec<Color3>>) -> String {
     let mut ppm = String::new();
     ppm.push_str("P3\n");
     ppm.push_str(&format!("{} {}\n", image[0].len(), image.len()));
@@ -187,16 +138,6 @@ impl Ray {
     fn at(&self, t: f32) -> Point3 {
         self.orig + t * self.dir
     }
-
-    fn color<T: Hittable>(&self, world: &T) -> Color3 {
-        if let Some(rec) = world.hit(self, UNIVERSE_INTERVAL) {
-            return 0.5 * (Color3::new(1.0, 1.0, 1.0) + rec.normal);
-        }
-
-        let unit_dir = self.dir.normalize();
-        let t = 0.5 * (unit_dir.1 + 1.0);
-        (1.0 - t) * Color3::new(1.0, 1.0, 1.0) + t * Color3::new(0.5, 0.7, 1.0)
-    }
 }
 
 struct Interval {
@@ -223,11 +164,6 @@ impl Default for Interval {
 const EMPTY_INTERVAL: Interval = Interval {
     min: f32::MAX,
     max: f32::MIN,
-};
-
-const UNIVERSE_INTERVAL: Interval = Interval {
-    min: f32::MIN,
-    max: f32::MAX,
 };
 
 struct HitRecord {
@@ -322,5 +258,75 @@ impl Hittable for HittableList {
         }
 
         temp_rec
+    }
+}
+
+struct Camera {
+    #[allow(dead_code)]
+    aspect_ratio: f32,
+    image_width: usize,
+    image_height: usize,
+    center: Point3,
+    lower_left_corner: Point3,
+    pixel_du: Vec3,
+    pixel_dv: Vec3,
+}
+
+impl Camera {
+    fn new(aspect_ratio: f32, image_width: usize) -> Self {
+        let image_height = (image_width as f32 / aspect_ratio) as usize;
+
+        let center = Point3::new(0.0, 0.0, 0.0);
+
+        // Viewport dimensions
+        let focal_length = 1.0_f32;
+        let viewport_height = 2.0_f32;
+        let viewport_width = viewport_height * image_width as f32 / image_height as f32;
+
+        // Vectors accross the viewport
+        let viewport_u = Vec3::new(viewport_width, 0.0, 0.0);
+        let viewport_v = Vec3::new(0.0, -viewport_height, 0.0);
+
+        // delta vectors
+        let pixel_du = viewport_u / image_width as f32;
+        let pixel_dv = viewport_v / image_height as f32;
+
+        // Lower left corner of the viewport
+        let viewport_upper_left =
+            center - Vec3::new(0.0, 0.0, focal_length) - (viewport_u / 2.0) - (viewport_v / 2.0);
+        let lower_left_corner = viewport_upper_left + (pixel_du / 2.0) + (pixel_dv / 2.0);
+
+        Camera {
+            aspect_ratio,
+            image_width,
+            image_height,
+            center,
+            lower_left_corner,
+            pixel_du,
+            pixel_dv,
+        }
+    }
+
+    fn render<T: Hittable>(&self, world: &T) -> Vec<Vec<Color3>> {
+        let mut image = vec![vec![Color3::default(); self.image_width]; self.image_height];
+        (0..self.image_height).for_each(|j| {
+            (0..self.image_width).for_each(|i| {
+                let (u, v) = (i as f32, j as f32);
+                let pixel_center = self.lower_left_corner + u * self.pixel_du + v * self.pixel_dv;
+                let ray = Ray::new(self.center, pixel_center - self.center);
+                image[j][i] = self.ray_color(&ray, world)
+            });
+        });
+        image
+    }
+
+    fn ray_color<T: Hittable>(&self, r: &Ray, world: &T) -> Color3 {
+        if let Some(rec) = world.hit(r, Interval::new(0.0, f32::MAX)) {
+            return 0.5 * (Color3::new(1.0, 1.0, 1.0) + rec.normal);
+        }
+
+        let unit_dir = r.dir.normalize();
+        let t = 0.5 * (unit_dir.1 + 1.0);
+        (1.0 - t) * Color3::new(1.0, 1.0, 1.0) + t * Color3::new(0.5, 0.7, 1.0)
     }
 }
